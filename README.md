@@ -2,7 +2,7 @@
 
 A web chatbot inspired by [rio.ai](https://rio.ai). Chats in Hinglish, detects emotion + intent, and remembers facts about you across conversations.
 
-**Stack:** React (Vite) + Node.js (Express) + SQLite (built-in `node:sqlite`) + OpenAI GPT-4o **or** Groq (switch via env var).
+**Stack:** React (Vite) + Node.js (Express) + local SQLite (`node:sqlite`) + Groq / Gemini / GitHub Models / OpenAI (switchable via env or the in-app model picker).
 
 ---
 
@@ -15,7 +15,7 @@ You need **Node.js 24+** (uses the built-in `node:sqlite` module — no native c
 cd backend
 npm install
 cp .env.example .env
-# edit .env and paste your API key on the matching line
+# edit .env: paste at least one LLM API key
 
 # 2. Install frontend (new terminal)
 cd frontend
@@ -30,6 +30,7 @@ Two terminals:
 # terminal 1 — backend
 cd backend
 npm run dev          # or: node server.js
+# → "[db] using sqlite backend"
 # → "Rio backend on :8787"
 
 # terminal 2 — frontend
@@ -42,29 +43,45 @@ Open http://localhost:5173 and start chatting.
 
 ---
 
-## Switching between OpenAI and Groq
+## Database — local SQLite
 
-Both providers use the same OpenAI-compatible API, so swapping is just env config — no code changes.
+Rio uses **SQLite** via Node 24+'s built-in `node:sqlite` module — no native compile, no third-party install, no keys, no quotas.
+
+The database file lives at `backend/data/rio.db`. It's created automatically on first run, along with the schema (`users`, `messages`, `memories`) and indexes. The directory is gitignored.
+
+To reset the database, just delete the file:
+
+```bash
+rm backend/data/rio.db
+```
+
+The next chat turn will create it again from scratch.
+
+> If you later need cloud sync or multi-machine access, the natural upgrade is **Neon** (Postgres) — same SQL shape, single `DATABASE_URL` env var, free tier with no IP whitelisting. Until then, local SQLite has the lowest possible operational footprint.
+
+---
+
+## Switching LLM providers
+
+All LLM providers (Groq, Gemini, GitHub Models, OpenAI) speak the same OpenAI-compatible API, so swapping is just env config — no code changes.
 
 In `backend/.env`:
 
 ```ini
-# use OpenAI
-LLM_PROVIDER=openai
+# default provider when frontend doesn't specify one
+LLM_PROVIDER=groq            # groq | gemini | github | openai
+
 OPENAI_API_KEY=sk-...
-
-# OR use Groq (free tier available)
-LLM_PROVIDER=groq
 GROQ_API_KEY=gsk-...
-
-# optional model override
-# LLM_MODEL=llama-3.1-8b-instant
+GEMINI_API_KEY=...
+GITHUB_TOKEN=ghp-...
 ```
 
-Get a Groq key at **https://console.groq.com** → API Keys. Free tier has generous per-day limits. Models include:
+The frontend's model picker lets you switch between any provider whose key is configured, per turn.
+
+Get a Groq key at **https://console.groq.com** → API Keys (free tier, generous limits). Models include:
 - `llama-3.3-70b-versatile` (default — best quality)
 - `llama-3.1-8b-instant` (fastest, cheapest)
-- `mixtral-8x7b-32768` (longer context)
 
 Restart the backend after changing `.env`.
 
@@ -86,73 +103,31 @@ The "Memories" sidebar shows what Rio has chosen to remember. Click × to forget
 | `GET` | `/api/conversation/:userId` | last 50 messages |
 | `GET` | `/api/memory/:userId` | all memories for user |
 | `DELETE` | `/api/memory/:id` | delete one memory |
+| `POST` | `/api/voice/tts` | `{text, voice?, lang?}` → `audio/mpeg` |
+| `GET` | `/api/providers` | list configured LLM providers |
 | `GET` | `/api/health` | `{ok: true}` |
 
-<<<<<<< HEAD
-## Database — local SQLite or cloud Supabase
-
-Set `DB_DRIVER` in `backend/.env`:
-
-```ini
-DB_DRIVER=sqlite     # local file at backend/data/rio.db (default — no setup)
-# or
-DB_DRIVER=supabase   # cloud Postgres (requires SUPABASE_URL + service_role key)
-```
-
-### Switching to Supabase
-1. Create a free project at https://supabase.com.
-2. Run this SQL in the project's SQL Editor:
-   ```sql
-   CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, created_at BIGINT NOT NULL);
-   CREATE TABLE messages (id BIGSERIAL PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, role TEXT, content TEXT, emotion TEXT, intent TEXT, created_at BIGINT NOT NULL);
-   CREATE INDEX idx_messages_user ON messages(user_id, created_at);
-   CREATE TABLE memories (id BIGSERIAL PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, fact TEXT, importance SMALLINT CHECK (importance BETWEEN 1 AND 5), created_at BIGINT NOT NULL);
-   CREATE INDEX idx_memories_user ON memories(user_id, importance DESC, created_at DESC);
-   ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-   ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
-   ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
-   ```
-3. Project Settings → API → copy **Project URL** and the **service_role** (or new "secret") key.
-4. Paste into `backend/.env`:
-   ```ini
-   DB_DRIVER=supabase
-   SUPABASE_URL=https://your-project.supabase.co
-   SUPABASE_SERVICE_ROLE_KEY=eyJ...
-   ```
-5. Restart backend. Look for `[db] using supabase backend` in logs.
-
-> ⚠ **Use the service_role / secret key only**, not the publishable/anon key. RLS is enabled; the publishable key won't have access. The secret key bypasses RLS — keep it server-side only.
-
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
 ## Files
 
 ```
 backend/
-<<<<<<< HEAD
-  server.js        — Express routes
-  rio.js           — LLM orchestration, system prompt, JSON shape
-  db.js            — router (picks sqlite or supabase by DB_DRIVER)
-  db.sqlite.js     — local SQLite implementation
-  db.supabase.js   — Supabase Postgres implementation
-  data/rio.db      — auto-created SQLite file (gitignored)
+  server.js     — Express routes
+  rio.js        — LLM orchestration, system prompt, JSON shape
+  voice.js      — TTS (Edge → Google → OpenAI fallback chain)
+  db.js         — re-exports the SQLite driver
+  db.sqlite.js  — local SQLite implementation (node:sqlite)
+  data/rio.db   — auto-created SQLite file (gitignored)
 frontend/
-  src/App.jsx — entire chat UI + theme + model picker
-  src/App.css — light/dark theme styles
-=======
-  server.js   — Express routes
-  db.js       — SQLite schema + queries
-  rio.js      — LLM orchestration, system prompt, JSON shape
-  data/rio.db — auto-created SQLite file (gitignored)
-frontend/
-  src/App.jsx — entire chat UI
-  src/App.css — styles
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+  src/App.jsx                — chat UI + theme + model picker
+  src/App.css                — light/dark theme styles
+  src/ModelPickerPopover.jsx — provider/model picker popover (header + in-call)
+  src/modelMeta.js           — model aliases, descriptions, taglines
+  src/voice/CallOverlay.jsx  — voice-call modal
+  src/voice/useVoiceCall.js  — STT loop, silence detection, TTS playback
 ```
 
 ## Not included (yet)
 
-- Voice replies / mic input
-- Multiple chat threads
-- Login (anyone visiting gets a localStorage user ID)
 - Streaming token responses
+- Authentication / multi-device sync (today: localStorage user ID only)
+- Multiple chat threads on the server side

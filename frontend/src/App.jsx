@@ -1,5 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nanoid } from 'nanoid';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import CallOverlay from './voice/CallOverlay.jsx';
+import ModelPickerPopover from './ModelPickerPopover.jsx';
+import FriendsModal from './FriendsModal.jsx';
+import MoodDashboard from './MoodDashboard.jsx';
+import Login from './Login.jsx';
+import { rioAlias } from './modelMeta.js';
+
+function loadAuth() {
+  try {
+    const raw = sessionStorage.getItem('rioAuth');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAuth(auth) {
+  if (auth) sessionStorage.setItem('rioAuth', JSON.stringify(auth));
+  else sessionStorage.removeItem('rioAuth');
+}
+
+// fetch wrapper that injects the bearer token and clears the session on 401.
+function makeAuthedFetch(token) {
+  return async (url, opts = {}) => {
+    const headers = new Headers(opts.headers || {});
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    const res = await fetch(url, { ...opts, headers });
+    if (res.status === 401) {
+      saveAuth(null);
+      window.location.reload();
+    }
+    return res;
+  };
+}
 
 const EMOTION_EMOJI = {
   happy: '😊',
@@ -14,7 +50,6 @@ const EMOTION_EMOJI = {
   tired: '😴',
 };
 
-<<<<<<< HEAD
 const SAMPLE_PROMPTS = [
   'arre yaar kya scene hai?',
   'mujhe aaj kuch motivation chahiye',
@@ -22,29 +57,6 @@ const SAMPLE_PROMPTS = [
   'thoda Pune ke baare me bata',
 ];
 
-const MODEL_ALIASES = {
-  'gpt-4o': 'rio1.1',
-  'gpt-4o-mini': 'rio1.2',
-  'llama-3.3-70b-versatile': 'rio2.1',
-  'llama-3.1-8b-instant': 'rio2.2',
-  'mixtral-8x7b-32768': 'rio2.3',
-  'gemini-2.5-flash': 'rio3.1',
-  'gemini-2.5-pro': 'rio3.2',
-  'gemini-2.0-flash': 'rio3.3',
-  'openai/gpt-4o': 'rio4.1',
-  'openai/gpt-4o-mini': 'rio4.2',
-  'meta/Meta-Llama-3.1-70B-Instruct': 'rio4.3',
-};
-
-function rioAlias(model) {
-  if (!model) return '';
-  if (MODEL_ALIASES[model]) return MODEL_ALIASES[model];
-  const tail = String(model).split('/').pop();
-  return MODEL_ALIASES[tail] || 'rio';
-}
-
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
 function getUserId() {
   let id = localStorage.getItem('rioUserId');
   if (!id) {
@@ -54,21 +66,16 @@ function getUserId() {
   return id;
 }
 
-<<<<<<< HEAD
-function loadSessions() {
-  try {
-    const raw = localStorage.getItem('rioChatSessions');
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
+// Stable per-device id used for things that should survive across "new chat",
+// most importantly the trusted-friends list. Kept separate from the per-chat
+// userId so each new chat doesn't reset the friends list.
+function getAccountId() {
+  let id = localStorage.getItem('rioAccountId');
+  if (!id) {
+    id = nanoid();
+    localStorage.setItem('rioAccountId', id);
   }
-}
-
-function saveSessions(list) {
-  try {
-    localStorage.setItem('rioChatSessions', JSON.stringify(list));
-  } catch {}
+  return id;
 }
 
 function timeAgo(t) {
@@ -84,8 +91,6 @@ function timeAgo(t) {
   return new Date(t).toLocaleDateString();
 }
 
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
 function loadModelChoice() {
   try {
     const raw = localStorage.getItem('rioModelChoice');
@@ -95,37 +100,73 @@ function loadModelChoice() {
   }
 }
 
-<<<<<<< HEAD
+function loadVoiceChoice() {
+  try {
+    const raw = localStorage.getItem('rioVoiceChoice');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function safeJson(r) {
+  const text = await r.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+const THEMES = ['earth', 'coastal'];
 function loadInitialTheme() {
   const saved = localStorage.getItem('rioTheme');
-  if (saved === 'light' || saved === 'dark') return saved;
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  if (THEMES.includes(saved)) return saved;
+  return 'earth';
+}
+
+export default function App() {
+  const [auth, setAuth] = useState(loadAuth);
+
+  if (!auth) {
+    return (
+      <Login
+        onAuthed={(a) => {
+          saveAuth(a);
+          setAuth(a);
+        }}
+      />
+    );
   }
-  return 'light';
+
+  return <ChatApp auth={auth} onLogout={() => { saveAuth(null); setAuth(null); }} />;
 }
 
-export default function App() {
-  const [userId, setUserId] = useState(getUserId);
-=======
-function saveModelChoice(choice) {
-  if (choice) localStorage.setItem('rioModelChoice', JSON.stringify(choice));
-}
-
-export default function App() {
-  const [userId] = useState(getUserId);
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+function ChatApp({ auth, onLogout }) {
+  const authedFetch = useMemo(() => makeAuthedFetch(auth.token), [auth.token]);
+  // Post-login, the email-bound user.id from the server is the durable id used
+  // for every backend call. We keep this in state for symmetry with the rest of
+  // the code, but it never changes within a session.
+  const [userId, setUserId] = useState(auth.userId);
+  const accountId = auth.userId;
   const [messages, setMessages] = useState([]);
   const [memories, setMemories] = useState([]);
   const [providers, setProviders] = useState([]);
   const [choice, setChoice] = useState(loadModelChoice);
+  const [voiceChoice, setVoiceChoice] = useState(loadVoiceChoice);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-<<<<<<< HEAD
   const [theme, setTheme] = useState(loadInitialTheme);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sessions, setSessions] = useState(loadSessions);
+  const [conversations, setConversations] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
+  const [inCall, setInCall] = useState(false);
+  const [moodOpen, setMoodOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
+  const [friendsCount, setFriendsCount] = useState(0);
+  const [alertBanner, setAlertBanner] = useState(null);
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -135,72 +176,101 @@ export default function App() {
     localStorage.setItem('rioTheme', theme);
   }, [theme]);
 
-  // initial load
-=======
-  const scrollRef = useRef(null);
-
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
-  useEffect(() => {
-    fetch(`/api/conversation/${userId}`)
-      .then((r) => r.json())
-      .then((d) => setMessages(d.messages ?? []))
+  // friends count badge (shared across chats — driven by accountId)
+  const refreshFriendsCount = () => {
+    authedFetch(`/api/friends/${accountId}`)
+      .then(safeJson)
+      .then((d) => setFriendsCount(d?.friends?.length ?? 0))
       .catch(() => {});
+  };
+  useEffect(() => {
+    refreshFriendsCount();
+  }, [accountId, friendsOpen]);
+
+  // initial load — fetch conversations, pick (or create) the active one,
+  // then load its messages. Also fetch providers in parallel.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await authedFetch(`/api/conversations/${userId}`);
+        const d = await safeJson(r);
+        let list = Array.isArray(d?.conversations) ? d.conversations : [];
+        if (cancelled) return;
+        if (list.length === 0) {
+          // First-time user — mint a starter conversation.
+          const created = await authedFetch('/api/conversations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, title: 'New chat' }),
+          }).then(safeJson);
+          if (cancelled) return;
+          if (created?.conversation) list = [created.conversation];
+        }
+        if (list.length === 0) return; // creation failed; bail quietly
+        setConversations(list);
+        const activeId = list[0].id;
+        setConversationId(activeId);
+        const convRes = await authedFetch(
+          `/api/conversation/${userId}?conversationId=${activeId}`
+        ).then(safeJson);
+        if (cancelled) return;
+        setMessages(convRes?.messages ?? []);
+      } catch {
+        // Network errors will surface when the user tries to send.
+      }
+    })();
+
     refreshMemories();
 
     fetch('/api/providers')
-      .then((r) => r.json())
+      .then(safeJson)
       .then((d) => {
-        const list = (d.providers ?? []).filter((p) => p.available);
+        if (cancelled) return;
+        const list = (d?.providers ?? []).filter((p) => p.available);
         setProviders(list);
-<<<<<<< HEAD
-=======
-        // if saved choice is no longer available, clear it
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+        // No auto-default. choice stays null on first load; user must pick.
+        // If a saved choice points to a model whose key is no longer set,
+        // drop it back to null.
         setChoice((cur) => {
-          if (!cur) return list[0] ? { provider: list[0].name, model: list[0].defaultModel } : null;
+          if (!cur) return null;
           const stillAvail = list.find((p) => p.name === cur.provider && p.models.includes(cur.model));
-          return stillAvail ? cur : list[0] ? { provider: list[0].name, model: list[0].defaultModel } : null;
+          return stillAvail ? cur : null;
+        });
+        setVoiceChoice((cur) => {
+          if (!cur) return null;
+          const stillAvail = list.find((p) => p.name === cur.provider && p.models.includes(cur.model));
+          return stillAvail ? cur : null;
         });
       })
       .catch(() => {});
+
+    return () => { cancelled = true; };
   }, [userId]);
 
   useEffect(() => {
-<<<<<<< HEAD
     if (choice) localStorage.setItem('rioModelChoice', JSON.stringify(choice));
+    else localStorage.removeItem('rioModelChoice');
   }, [choice]);
 
-  // sync chat session metadata when messages change
   useEffect(() => {
-    if (messages.length === 0) return;
-    const firstUser = messages.find((m) => m.role === 'user');
-    if (!firstUser) return;
-    const title = (firstUser.content || '').slice(0, 60).trim() || 'Chat';
-    setSessions((prev) => {
-      const existing = prev.find((s) => s.id === userId);
-      const entry = {
-        id: userId,
-        title,
-        createdAt: existing?.createdAt ?? Date.now(),
-        updatedAt: Date.now(),
-        msgCount: messages.length,
-      };
-      const next = [entry, ...prev.filter((s) => s.id !== userId)];
-      saveSessions(next);
-      return next;
-    });
-  }, [messages, userId]);
+    if (voiceChoice) localStorage.setItem('rioVoiceChoice', JSON.stringify(voiceChoice));
+    else localStorage.removeItem('rioVoiceChoice');
+  }, [voiceChoice]);
 
-=======
-    saveModelChoice(choice);
-  }, [choice]);
+  async function refreshConversations() {
+    try {
+      const r = await authedFetch(`/api/conversations/${userId}`);
+      const d = await safeJson(r);
+      const list = Array.isArray(d?.conversations) ? d.conversations : [];
+      setConversations(list);
+    } catch {}
+  }
 
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
 
-<<<<<<< HEAD
   // auto-grow textarea
   useEffect(() => {
     const ta = textareaRef.current;
@@ -209,161 +279,307 @@ export default function App() {
     ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
   }, [input]);
 
-=======
-  // build flat list of (provider, model) options for the dropdown
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
   const modelOptions = useMemo(() => {
     return providers.flatMap((p) =>
       p.models.map((m) => ({
         value: `${p.name}::${m}`,
         provider: p.name,
+        providerLabel: p.label,
         model: m,
-<<<<<<< HEAD
         label: rioAlias(m),
-=======
-        label: `${p.label} · ${m}`,
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
       }))
     );
   }, [providers]);
 
   async function refreshMemories() {
     try {
-      const r = await fetch(`/api/memory/${userId}`);
-      const d = await r.json();
-      setMemories(d.memories ?? []);
+      const r = await authedFetch(`/api/memory/${userId}`);
+      const d = await safeJson(r);
+      setMemories(d?.memories ?? []);
     } catch {}
   }
 
-<<<<<<< HEAD
-  async function send(textOverride) {
-    const text = (textOverride ?? input).trim();
-    if (!text || loading) return;
-    setError(null);
-    if (!textOverride) setInput('');
-=======
-  async function send() {
-    const text = input.trim();
-    if (!text || loading) return;
-    setError(null);
-    setInput('');
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+  async function sendStreamed(text, body, turnIds) {
+    // SSE-based streaming. Each `event: token` arrives as it's produced;
+    // the final `event: done` carries emotion/intent/model/distress.
+    const userMsg = { role: 'user', content: text, id: turnIds.user };
+    const assistantId = turnIds.assistant;
+    setMessages((prev) => [...prev, userMsg, { role: 'assistant', content: '', id: assistantId, streaming: true }]);
 
-    const userMsg = { role: 'user', content: text, id: `tmp-${Date.now()}` };
-    setMessages((prev) => [...prev, userMsg]);
-    setLoading(true);
-
+    let response;
     try {
-      const body = { userId, message: text };
-      if (choice) {
-        body.provider = choice.provider;
-        body.model = choice.model;
-      }
-      const r = await fetch('/api/chat', {
+      response = await authedFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, stream: true }),
       });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error ?? 'request failed');
+    } catch {
+      throw new Error('Cannot reach Rio backend. Make sure the server is running on port 8787.');
+    }
+    if (!response.ok || !response.body) {
+      const data = await safeJson(response).catch(() => null);
+      throw new Error(data?.error ?? `Server error (${response.status}).`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalEvent = null;
+    let errorEvent = null;
+    let acc = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE events end with "\n\n"
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const ev = parseSseEvent(raw);
+        if (!ev) continue;
+        if (ev.event === 'token') {
+          acc += ev.data.token ?? '';
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m))
+          );
+        } else if (ev.event === 'done') {
+          finalEvent = ev.data;
+        } else if (ev.event === 'error') {
+          errorEvent = ev.data;
+        }
+      }
+    }
+
+    if (errorEvent) {
+      throw new Error(errorEvent.error ?? 'stream error');
+    }
+    if (!finalEvent) {
+      throw new Error('Stream ended without a done event.');
+    }
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id === userMsg.id) return { ...m, emotion: finalEvent.emotion, intent: finalEvent.intent };
+        if (m.id === assistantId) return {
+          ...m,
+          content: finalEvent.reply ?? acc,
+          model: finalEvent.model,
+          streaming: false,
+        };
+        return m;
+      })
+    );
+    return finalEvent;
+  }
+
+  async function send(textOverride, opts = {}) {
+    const text = (textOverride ?? input).trim();
+    if (!text || loading) return;
+    if (!conversationId) {
+      setError('Setting up your chat… try again in a moment.');
+      return;
+    }
+    setError(null);
+    if (!textOverride) setInput('');
+
+    setLoading(true);
+
+    const isFirstMessage = messages.length === 0;
+    const body = { userId, accountId, conversationId, message: text };
+    if (opts.voiceMode) {
+      body.mode = 'voice';
+      if (voiceChoice) {
+        body.provider = voiceChoice.provider;
+        body.model = voiceChoice.model;
+      }
+    } else if (choice) {
+      body.provider = choice.provider;
+      body.model = choice.model;
+    }
+
+    // Streaming is only used for non-voice text turns with a pinned model.
+    // Voice mode uses the auto-cascade non-streaming path so failures can fall
+    // through to the next provider.
+    const canStream = !opts.voiceMode && !!choice;
+    const turnId = Date.now();
+    const turnIds = { user: `tmp-${turnId}`, assistant: `asst-${turnId}` };
+
+    try {
+      if (canStream) {
+        const final = await sendStreamed(text, body, turnIds);
+        if (final?.memorySaved) refreshMemories();
+        if (final?.alertsSent > 0) {
+          setAlertBanner(`Pinged ${final.alertsSent} friend${final.alertsSent === 1 ? '' : 's'} to check in.`);
+        }
+        if (isFirstMessage) {
+          maybeAutoTitleConversation(conversationId, text);
+        } else {
+          refreshConversations();
+        }
+        return final?.reply;
+      }
+
+      // Non-streaming path
+      const userMsg = { role: 'user', content: text, id: turnIds.user };
+      setMessages((prev) => [...prev, userMsg]);
+      let r;
+      try {
+        r = await authedFetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        throw new Error('Cannot reach Rio backend. Make sure the server is running on port 8787.');
+      }
+      const data = await safeJson(r);
+      if (!r.ok) {
+        throw new Error(data?.error ?? `Server error (${r.status}). Try again or pick a different model.`);
+      }
+      if (!data || typeof data.reply !== 'string') {
+        throw new Error('Got an empty response from Rio. Try again.');
+      }
 
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
         if (last && last.id === userMsg.id) {
-<<<<<<< HEAD
           updated[updated.length - 1] = { ...last, emotion: data.emotion, intent: data.intent };
         }
         return [...updated, { role: 'assistant', content: data.reply, model: data.model }];
       });
-=======
-          updated[updated.length - 1] = {
-            ...last,
-            emotion: data.emotion,
-            intent: data.intent,
-          };
-        }
-        return [...updated, { role: 'assistant', content: data.reply, model: data.model }];
-      });
-
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
       if (data.memorySaved) refreshMemories();
+      if (data.alertsSent > 0) {
+        setAlertBanner(`Pinged ${data.alertsSent} friend${data.alertsSent === 1 ? '' : 's'} to check in.`);
+      }
+      // Auto-title the conversation from the user's first message.
+      if (isFirstMessage) {
+        maybeAutoTitleConversation(conversationId, text);
+      } else {
+        refreshConversations();
+      }
+      return data.reply;
     } catch (e) {
       setError(e.message);
-      setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-<<<<<<< HEAD
+      // Roll back ONLY this turn's optimistic messages.
+      setMessages((prev) => prev.filter((m) => m.id !== turnIds.user && m.id !== turnIds.assistant));
       if (!textOverride) setInput(text);
-=======
-      setInput(text);
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+      return null;
     } finally {
       setLoading(false);
     }
   }
 
+  async function maybeAutoTitleConversation(id, firstMessage) {
+    const title = (firstMessage || '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'New chat';
+    try {
+      await authedFetch(`/api/conversations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+    } catch {}
+    refreshConversations();
+  }
+
   async function deleteMemory(id) {
-    await fetch(`/api/memory/${id}`, { method: 'DELETE' });
+    await authedFetch(`/api/memory/${id}`, { method: 'DELETE' });
     setMemories((prev) => prev.filter((m) => m.id !== id));
   }
 
-<<<<<<< HEAD
-  function newChat() {
-    const newId = nanoid();
-    localStorage.setItem('rioUserId', newId);
-    setUserId(newId);
-    setMessages([]);
-    setMemories([]);
-    setError(null);
-    setDrawerOpen(false);
-  }
-
-  function clearChat() {
-    if (!confirm('Clear this chat? It will be removed from your history.')) return;
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== userId);
-      saveSessions(next);
-      return next;
-    });
-    const newId = nanoid();
-    localStorage.setItem('rioUserId', newId);
-    setUserId(newId);
-    setMessages([]);
-    setMemories([]);
-    setError(null);
-  }
-
-  function loadSession(id) {
-    if (id === userId) {
-      setDrawerOpen(false);
-      return;
+  async function patchMemory(id, patch) {
+    setMemories((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+    try {
+      await authedFetch(`/api/memory/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+    } catch {
+      refreshMemories();
     }
-    localStorage.setItem('rioUserId', id);
-    setUserId(id);
-    setMessages([]);
-    setMemories([]);
-    setError(null);
-    setDrawerOpen(false);
   }
 
-  function deleteSession(id, e) {
-    e?.stopPropagation();
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== id);
-      saveSessions(next);
-      return next;
-    });
-    if (id === userId) {
-      const newId = nanoid();
-      localStorage.setItem('rioUserId', newId);
-      setUserId(newId);
+  async function newChat() {
+    setError(null);
+    setDrawerOpen(false);
+    try {
+      const r = await authedFetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, title: 'New chat' }),
+      });
+      const d = await safeJson(r);
+      if (!r.ok || !d?.conversation) {
+        throw new Error(d?.error || `Could not create chat (${r.status}).`);
+      }
+      setConversations((prev) => [d.conversation, ...prev]);
+      setConversationId(d.conversation.id);
       setMessages([]);
-      setMemories([]);
-      setError(null);
+    } catch (e) {
+      setError(e.message || 'Could not start a new chat.');
     }
   }
 
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+  // Local-only — wipes the on-screen messages but keeps the conversation row
+  // and its history on the server. Useful if the screen feels cluttered.
+  function clearChat() {
+    if (!confirm('Clear the current chat from view?')) return;
+    setMessages([]);
+    setError(null);
+  }
+
+  async function loadSession(id) {
+    setDrawerOpen(false);
+    if (id === conversationId) return;
+    setError(null);
+    setConversationId(id);
+    setMessages([]);
+    try {
+      const r = await authedFetch(`/api/conversation/${userId}?conversationId=${id}`);
+      const d = await safeJson(r);
+      if (!r.ok) {
+        throw new Error(d?.error || `Could not load chat (${r.status}).`);
+      }
+      setMessages(d?.messages ?? []);
+    } catch (e) {
+      setError(e.message || 'Could not load that chat.');
+    }
+  }
+
+  async function deleteSession(id, e) {
+    e?.stopPropagation();
+    if (!confirm('Delete this chat and its history?')) return;
+    try {
+      const r = await authedFetch(`/api/conversations/${id}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const d = await safeJson(r);
+        throw new Error(d?.error || `Could not delete chat (${r.status}).`);
+      }
+      const remaining = conversations.filter((c) => c.id !== id);
+      setConversations(remaining);
+      if (id === conversationId) {
+        // If we just deleted the active chat, switch to another one or mint a fresh one.
+        if (remaining.length > 0) {
+          await loadSession(remaining[0].id);
+        } else {
+          await newChat();
+        }
+      }
+    } catch (err) {
+      setError(err.message || 'Could not delete that chat.');
+    }
+  }
+
+  async function signOut() {
+    try {
+      await authedFetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    onLogout();
+  }
+
   function onKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -371,7 +587,6 @@ export default function App() {
     }
   }
 
-<<<<<<< HEAD
   function editMessage(text) {
     setInput(text);
     const ta = textareaRef.current;
@@ -384,46 +599,58 @@ export default function App() {
     }
   }
 
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
-  function onModelChange(e) {
-    const opt = modelOptions.find((o) => o.value === e.target.value);
-    if (opt) setChoice({ provider: opt.provider, model: opt.model });
-  }
-
-  const currentValue = choice ? `${choice.provider}::${choice.model}` : '';
-<<<<<<< HEAD
   const noProviders = modelOptions.length === 0;
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
 
   return (
     <div className="app">
       <header className="header">
         <div className="brand">
-          <span className="brand-dot" />
+          <RioLogo />
           <h1>Rio</h1>
           <span className="brand-sub">your AI dost</span>
         </div>
 
-<<<<<<< HEAD
         <div className="header-controls">
           <div className="model-picker">
             {noProviders ? (
               <span className="muted">No providers configured</span>
             ) : (
-              <>
-                <label htmlFor="model-select">Model</label>
-                <select id="model-select" value={currentValue} onChange={onModelChange}>
-                  {modelOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </>
+              <ModelPickerPopover
+                value={choice}
+                onChange={(next) => setChoice(next)}
+                modelOptions={modelOptions}
+                variant="light"
+              />
             )}
           </div>
+
+          <button
+            className="icon-btn friends-btn"
+            onClick={() => setFriendsOpen(true)}
+            title="Trusted friends — saved across all chats"
+            aria-label="Trusted friends"
+          >
+            <UsersIcon />
+            {friendsCount > 0 && <span className="badge">{friendsCount}</span>}
+          </button>
+
+          <button
+            className="icon-btn"
+            onClick={() => setMoodOpen(true)}
+            title="Mood tracker"
+            aria-label="Mood tracker"
+          >
+            <ChartIcon />
+          </button>
+
+          <button
+            className="icon-btn call-btn"
+            onClick={() => setInCall(true)}
+            title="Call Rio (voice mode)"
+            aria-label="Start voice call"
+          >
+            <PhoneIcon />
+          </button>
 
           <button
             className="icon-btn"
@@ -435,47 +662,36 @@ export default function App() {
           </button>
 
           <button
-            className="icon-btn"
-            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            aria-label="Toggle theme"
+            className="icon-btn theme-btn"
+            onClick={() => setTheme((t) => (t === 'earth' ? 'coastal' : 'earth'))}
+            title={theme === 'earth' ? 'Switch to Coastal palette' : 'Switch to Earth palette'}
+            aria-label="Switch palette"
           >
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+            {theme === 'earth' ? <WaveIcon /> : <LeafIcon />}
           </button>
 
           <button
-            className="icon-btn mobile-only"
-            onClick={() => setDrawerOpen(true)}
-            title="Show sidebar"
-            aria-label="Show sidebar"
-            style={{ display: 'none' }}
+            className="icon-btn"
+            onClick={signOut}
+            title={`Sign out (${auth.email || 'signed in'})`}
+            aria-label="Sign out"
           >
-            <MemoryIcon />
+            <LogoutIcon />
           </button>
-=======
-        <div className="model-picker">
-          {modelOptions.length === 0 ? (
-            <span className="muted">No providers configured. Add a key to backend/.env</span>
-          ) : (
-            <>
-              <label htmlFor="model-select">Model:</label>
-              <select id="model-select" value={currentValue} onChange={onModelChange}>
-                {modelOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+
         </div>
       </header>
+
+      {alertBanner && (
+        <div className="alert-banner">
+          <span>{alertBanner}</span>
+          <button onClick={() => setAlertBanner(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
 
       <div className="layout">
         <main className="chat">
           <div className="chat-scroll" ref={scrollRef}>
-<<<<<<< HEAD
             {messages.length === 0 && !loading ? (
               <div className="empty">
                 <div className="empty-emoji">👋</div>
@@ -492,54 +708,32 @@ export default function App() {
             ) : (
               messages.map((m, i) => <Bubble key={m.id ?? i} msg={m} onEdit={editMessage} />)
             )}
-=======
-            {messages.length === 0 && !loading && (
-              <div className="empty">
-                <p>arre, hi! 👋</p>
-                <p className="empty-sub">kuch bhi bol — main sun rahi hoon.</p>
-              </div>
-            )}
-            {messages.map((m, i) => (
-              <Bubble key={m.id ?? i} msg={m} />
-            ))}
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
-            {loading && <TypingDots />}
+            {loading && messages[messages.length - 1]?.role !== 'assistant' && <TypingDots />}
           </div>
 
           <div className="composer">
             {error && <div className="error">⚠ {error}</div>}
             <textarea
-<<<<<<< HEAD
               ref={textareaRef}
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
-              placeholder="kuch likh… (Enter to send, Shift+Enter for newline)"
+              placeholder={inCall ? 'on call with Rio…' : 'kuch likh… (Enter to send, Shift+Enter for newline)'}
               rows={1}
-<<<<<<< HEAD
-              disabled={loading || noProviders}
+              disabled={loading || noProviders || inCall}
             />
             <button
               className="send-btn"
               onClick={() => send()}
-              disabled={loading || !input.trim() || noProviders}
+              disabled={loading || !input.trim() || noProviders || inCall}
               aria-label="Send"
               title="Send"
             >
               <SendIcon />
-=======
-              disabled={loading}
-            />
-            <button onClick={send} disabled={loading || !input.trim() || modelOptions.length === 0}>
-              {loading ? '…' : 'Send'}
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
             </button>
           </div>
         </main>
 
-<<<<<<< HEAD
         {drawerOpen && <div className="backdrop" onClick={() => setDrawerOpen(false)} />}
         <aside className={`sidebar ${drawerOpen ? 'open' : ''}`}>
           <button
@@ -558,27 +752,27 @@ export default function App() {
           <div className="sidebar-section">
             <div className="sidebar-head">
               <h2>Chat history</h2>
-              {sessions.length > 0 && <span className="count">{sessions.length}</span>}
+              {conversations.length > 0 && <span className="count">{conversations.length}</span>}
             </div>
-            {sessions.length === 0 ? (
+            {conversations.length === 0 ? (
               <p className="muted">Your past chats will appear here.</p>
             ) : (
               <ul className="history">
-                {sessions.map((s) => (
+                {conversations.map((c) => (
                   <li
-                    key={s.id}
-                    className={`history-item ${s.id === userId ? 'active' : ''}`}
-                    onClick={() => loadSession(s.id)}
+                    key={c.id}
+                    className={`history-item ${c.id === conversationId ? 'active' : ''}`}
+                    onClick={() => loadSession(c.id)}
                   >
                     <div className="history-text">
-                      <span className="history-title">{s.title}</span>
+                      <span className="history-title">{c.title}</span>
                       <span className="history-meta">
-                        {timeAgo(s.updatedAt)} · {s.msgCount} msg
+                        {timeAgo(c.updated_at)} · {c.msg_count} msg
                       </span>
                     </div>
                     <button
                       className="del"
-                      onClick={(e) => deleteSession(s.id, e)}
+                      onClick={(e) => deleteSession(c.id, e)}
                       title="Delete chat"
                       aria-label="Delete chat"
                     >
@@ -600,54 +794,133 @@ export default function App() {
             ) : (
               <ul className="memories">
                 {memories.map((m) => (
-                  <li key={m.id}>
-                    <span className="memory-fact">{m.fact}</span>
-                    <span className="memory-meta">
-                      <span className="importance">{'★'.repeat(m.importance)}</span>
-                      <button className="del" onClick={() => deleteMemory(m.id)} title="Forget this">
-                        ×
-                      </button>
-                    </span>
-                  </li>
+                  <MemoryItem
+                    key={m.id}
+                    memory={m}
+                    onDelete={() => deleteMemory(m.id)}
+                    onPatch={(patch) => patchMemory(m.id, patch)}
+                  />
                 ))}
               </ul>
             )}
           </div>
-=======
-        <aside className="sidebar">
-          <div className="sidebar-head">
-            <h2>Memories</h2>
-            <span className="count">{memories.length}</span>
-          </div>
-          {memories.length === 0 ? (
-            <p className="muted">Rio will remember important things you share.</p>
-          ) : (
-            <ul className="memories">
-              {memories.map((m) => (
-                <li key={m.id}>
-                  <span className="memory-fact">{m.fact}</span>
-                  <span className="memory-meta">
-                    <span className="importance">{'★'.repeat(m.importance)}</span>
-                    <button
-                      className="del"
-                      onClick={() => deleteMemory(m.id)}
-                      title="Forget this"
-                    >
-                      ×
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+
         </aside>
       </div>
+
+      <CallOverlay
+        isOpen={inCall}
+        onClose={() => setInCall(false)}
+        onTurn={(text) => send(text, { voiceMode: true })}
+        modelOptions={modelOptions}
+        voiceChoice={voiceChoice}
+        onVoiceChoiceChange={setVoiceChoice}
+        authedFetch={authedFetch}
+      />
+
+      <MoodDashboard
+        isOpen={moodOpen}
+        onClose={() => setMoodOpen(false)}
+        userId={userId}
+        authedFetch={authedFetch}
+      />
+
+      <FriendsModal
+        isOpen={friendsOpen}
+        onClose={() => setFriendsOpen(false)}
+        accountId={accountId}
+        authedFetch={authedFetch}
+      />
     </div>
   );
 }
 
-<<<<<<< HEAD
+function parseSseEvent(raw) {
+  const lines = raw.split('\n');
+  let event = 'message';
+  let data = '';
+  for (const line of lines) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  try {
+    return { event, data: JSON.parse(data) };
+  } catch {
+    return null;
+  }
+}
+
+function MemoryItem({ memory, onDelete, onPatch }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(memory.fact);
+
+  function save() {
+    const next = draft.trim();
+    if (next && next !== memory.fact) onPatch({ fact: next });
+    setEditing(false);
+  }
+
+  function bumpImportance(stars) {
+    if (stars !== memory.importance) onPatch({ importance: stars });
+  }
+
+  return (
+    <li>
+      {editing ? (
+        <input
+          className="memory-edit"
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') save();
+            if (e.key === 'Escape') {
+              setDraft(memory.fact);
+              setEditing(false);
+            }
+          }}
+        />
+      ) : (
+        <span
+          className="memory-fact"
+          onDoubleClick={() => setEditing(true)}
+          title="Double-click to edit"
+        >
+          {memory.fact}
+        </span>
+      )}
+      <span className="memory-meta">
+        <span className="importance importance-clickable">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <span
+              key={n}
+              role="button"
+              aria-label={`Set importance ${n}`}
+              onClick={() => bumpImportance(n)}
+              className={n <= memory.importance ? 'star-on' : 'star-off'}
+            >
+              ★
+            </span>
+          ))}
+        </span>
+        <button
+          className="del"
+          onClick={() => setEditing((v) => !v)}
+          title={editing ? 'Done' : 'Edit'}
+          aria-label="Edit memory"
+        >
+          {editing ? '✓' : '✎'}
+        </button>
+        <button className="del" onClick={onDelete} title="Forget this">
+          ×
+        </button>
+      </span>
+    </li>
+  );
+}
+
 function Bubble({ msg, onEdit }) {
   const isUser = msg.role === 'user';
   const emoji = msg.emotion ? EMOTION_EMOJI[msg.emotion] ?? '' : '';
@@ -674,7 +947,18 @@ function Bubble({ msg, onEdit }) {
 
   return (
     <div className={`row ${isUser ? 'row-user' : 'row-rio'}`}>
-      <div className={`bubble ${isUser ? 'bubble-user' : 'bubble-rio'}`}>{msg.content}</div>
+      <div className={`bubble ${isUser ? 'bubble-user' : 'bubble-rio'}${msg.streaming ? ' bubble-streaming' : ''}`}>
+        {isUser ? (
+          msg.content
+        ) : (
+          <>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} className="md">
+              {msg.content || ''}
+            </ReactMarkdown>
+            {msg.streaming && <span className="stream-caret" />}
+          </>
+        )}
+      </div>
       {isUser && (
         <div className="msg-actions">
           <button
@@ -696,27 +980,13 @@ function Bubble({ msg, onEdit }) {
           </button>
         </div>
       )}
-=======
-function Bubble({ msg }) {
-  const isUser = msg.role === 'user';
-  const emoji = msg.emotion ? EMOTION_EMOJI[msg.emotion] ?? '' : '';
-  return (
-    <div className={`row ${isUser ? 'row-user' : 'row-rio'}`}>
-      <div className={`bubble ${isUser ? 'bubble-user' : 'bubble-rio'}`}>
-        {msg.content}
-      </div>
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
       {isUser && msg.emotion && (
         <div className="chip">
           {emoji} {msg.emotion}
           {msg.intent && <span className="chip-sep"> · {msg.intent}</span>}
         </div>
       )}
-<<<<<<< HEAD
       {!isUser && msg.model && <div className="chip chip-model">{rioAlias(msg.model)}</div>}
-=======
-      {!isUser && msg.model && <div className="chip chip-model">{msg.model}</div>}
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
     </div>
   );
 }
@@ -730,21 +1000,63 @@ function TypingDots() {
     </div>
   );
 }
-<<<<<<< HEAD
 
 /* ============== ICONS ============== */
-function SunIcon() {
+function RioLogo() {
+  // Balance mark — yin-yang inside a soft halo.
+  // Speaks to calm / mind / equilibrium, matching the project's wellness intent.
+  // Mathematical SVG (only circles + arcs) so it renders precisely at every size.
+  // Colors come from --logo-fg / --logo-bg so the mark retints per palette.
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    <svg
+      className="brand-logo"
+      viewBox="0 0 100 100"
+      width="40"
+      height="40"
+      aria-label="Rio logo"
+      role="img"
+    >
+      {/* outer halo ring */}
+      <circle cx="50" cy="50" r="48" fill="none" stroke="var(--logo-fg)" strokeWidth="1" opacity="0.18" />
+      <circle cx="50" cy="50" r="44" fill="none" stroke="var(--logo-fg)" strokeWidth="0.6" opacity="0.10" />
+
+      {/* yin-yang body — light side */}
+      <circle cx="50" cy="50" r="38" fill="var(--logo-bg)" />
+
+      {/* yin-yang body — dark S-half (right + bottom-left lobe) */}
+      <path
+        d="M 50 12 A 38 38 0 0 1 50 88 A 19 19 0 0 0 50 50 A 19 19 0 0 1 50 12 Z"
+        fill="var(--logo-fg)"
+      />
+
+      {/* light dot inside the dark lobe */}
+      <circle cx="50" cy="69" r="5" fill="var(--logo-bg)" />
+      {/* dark dot inside the light lobe */}
+      <circle cx="50" cy="31" r="5" fill="var(--logo-fg)" />
+
+      {/* four cardinal aura ticks for a subtle meditative feel */}
+      <circle cx="50" cy="3.5" r="1.4" fill="var(--logo-fg)" opacity="0.55" />
+      <circle cx="50" cy="96.5" r="1.4" fill="var(--logo-fg)" opacity="0.55" />
+      <circle cx="3.5" cy="50" r="1.1" fill="var(--logo-fg)" opacity="0.35" />
+      <circle cx="96.5" cy="50" r="1.1" fill="var(--logo-fg)" opacity="0.35" />
     </svg>
   );
 }
-function MoonIcon() {
+
+function LeafIcon() {
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19.8 2c1 5 .5 10-2.5 13a7 7 0 0 1-6.3 5z" />
+      <path d="M2 21c0-3 1.85-5.36 5.08-6" />
+    </svg>
+  );
+}
+function WaveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2" />
+      <path d="M2 17c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2" />
+      <path d="M2 7c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2" />
     </svg>
   );
 }
@@ -763,6 +1075,13 @@ function NewChatIcon() {
     </svg>
   );
 }
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.37 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.33 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
+    </svg>
+  );
+}
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -770,13 +1089,6 @@ function TrashIcon() {
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
       <path d="M10 11v6M14 11v6" />
       <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-    </svg>
-  );
-}
-function MemoryIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   );
 }
@@ -803,5 +1115,31 @@ function CheckIcon() {
     </svg>
   );
 }
-=======
->>>>>>> 786c0049af409a8f55b2e30d04cb507323e12116
+function ChartIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="20" x2="12" y2="10" />
+      <line x1="18" y1="20" x2="18" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
+    </svg>
+  );
+}
+function UsersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+function LogoutIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
