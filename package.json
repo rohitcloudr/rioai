@@ -1,0 +1,16 @@
+{
+  "name": "rio-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Rio — AI Dost. Express + Vite/React monorepo.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "install:all": "npm --prefix app/backend install && npm --prefix app/frontend install",
+    "build": "npm --prefix app/frontend run build",
+    "start": "npm --prefix app/backend start",
+    "dev:backend": "npm --prefix app/backend run dev",
+    "dev:frontend": "npm --prefix app/frontend run dev"
+  }
+}
