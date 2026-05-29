@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiUrl } from './api.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -12,7 +13,7 @@ export default function FriendsManager({ userId }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/friends/${userId}`)
+    fetch(apiUrl(`/api/friends/${userId}`))
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) setFriends(d.friends ?? []);
@@ -33,7 +34,7 @@ export default function FriendsManager({ userId }) {
     setAdding(true);
     setErr(null);
     try {
-      const r = await fetch('/api/friends', {
+      const r = await fetch(apiUrl('/api/friends'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, email: trimmed, name: name.trim() || undefined }),
@@ -54,7 +55,7 @@ export default function FriendsManager({ userId }) {
   async function removeFriend(id) {
     if (!confirm('Remove this friend? They will no longer be alerted if you hit a hard moment.')) return;
     try {
-      await fetch(`/api/friends/${id}`, { method: 'DELETE' });
+      await fetch(apiUrl(`/api/friends/${id}`), { method: 'DELETE' });
       setFriends((prev) => prev.filter((f) => f.id !== id));
     } catch {}
   }

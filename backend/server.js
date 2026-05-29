@@ -24,7 +24,26 @@ import { isEmailConfigured } from './email.js';
 import { requestLoginCode, verifyLoginCode, logout, requireAuth, assertOwnsId } from './auth.js';
 
 const app = express();
-app.use(cors());
+
+// CORS: in production, set FRONTEND_URL to your deployed site origin
+// (comma-separated list also works, e.g. "https://rio.vercel.app,https://rio.example.com").
+// If unset, falls back to allowing all origins — convenient for local dev.
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: allowedOrigins.length === 0 ? true : allowedOrigins,
+    credentials: true,
+  })
+);
+
+// Trust the first proxy (Render/Railway/Fly all sit behind one) so req.ip
+// and req.protocol reflect the real client.
+app.set('trust proxy', 1);
+
 app.use(express.json({ limit: '64kb' }));
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

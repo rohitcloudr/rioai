@@ -8,6 +8,7 @@ import FriendsModal from './FriendsModal.jsx';
 import MoodDashboard from './MoodDashboard.jsx';
 import Login from './Login.jsx';
 import { rioAlias } from './modelMeta.js';
+import { apiUrl } from './api.js';
 
 function loadAuth() {
   try {
@@ -28,7 +29,7 @@ function makeAuthedFetch(token) {
   return async (url, opts = {}) => {
     const headers = new Headers(opts.headers || {});
     if (token) headers.set('Authorization', `Bearer ${token}`);
-    const res = await fetch(url, { ...opts, headers });
+    const res = await fetch(apiUrl(url), { ...opts, headers });
     if (res.status === 401) {
       saveAuth(null);
       window.location.reload();
@@ -223,7 +224,7 @@ function ChatApp({ auth, onLogout }) {
 
     refreshMemories();
 
-    fetch('/api/providers')
+    fetch(apiUrl('/api/providers'))
       .then(safeJson)
       .then((d) => {
         if (cancelled) return;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { apiUrl } from './api.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -41,7 +42,7 @@ export default function Login({ onAuthed }) {
     }
     setBusy(true);
     try {
-      const r = await fetch('/api/auth/request-code', {
+      const r = await fetch(apiUrl('/api/auth/request-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmed, adminCode: trimmedAdmin }),
@@ -73,7 +74,7 @@ export default function Login({ onAuthed }) {
     setBusy(true);
     try {
       const anonUserId = localStorage.getItem('rioUserId') || null;
-      const r = await fetch('/api/auth/verify-code', {
+      const r = await fetch(apiUrl('/api/auth/verify-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code: code.trim(), anonUserId }),

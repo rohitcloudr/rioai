@@ -1,9 +1,20 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DB_PATH = resolve('data', 'rio.db');
+// In production, set DATABASE_PATH to a path on a persistent disk/volume
+// (e.g. /data/rio.db on Render/Railway/Fly). When unset, defaults to
+// <backend-folder>/data/rio.db — anchored to this file's location so the
+// path is the same whether you `cd app/backend && npm start` or run from
+// the repo root. Gitignored.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const DB_PATH = process.env.DATABASE_PATH
+  ? resolve(process.env.DATABASE_PATH)
+  : resolve(HERE, 'data', 'rio.db');
 mkdirSync(dirname(DB_PATH), { recursive: true });
+
+console.log(`[db] sqlite file at ${DB_PATH}`);
 
 const db = new DatabaseSync(DB_PATH);
 
