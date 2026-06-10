@@ -39,6 +39,9 @@ app.use(
     credentials: true,
   })
 );
+app.get("/", (req, res) => {
+  res.send("RioAI Backend is running!");
+});
 
 // Trust the first proxy (Render/Railway/Fly all sit behind one) so req.ip
 // and req.protocol reflect the real client.
